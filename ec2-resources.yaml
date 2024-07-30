@@ -1,0 +1,168 @@
+Description: >
+    This CloudFormation template defines the infrastructure required 
+    for a 3-tier application on AWS. 
+    The architecture includes Virtual Private Cloud (VPC) setup, 
+    EC2 instances for web and application layers across multiple Availability Zones, 
+    and configurations for an Application Load Balancer (ALB) to distribute traffic
+
+Mappings:
+  AWSAZsArch2AMI:
+    us-east-1a:
+      HVM: ami-0427090fd1714168b
+    us-east-1b:
+      HVM: ami-0427090fd1714168b
+
+Parameters:
+  InstanceType:
+    Description: WebServer and AppServer EC2 instance type
+    Type: String
+    Default: "t2.micro"
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+
+  MyVPC:
+    Description: VPC to operate in
+    Type: String
+    Default: vpc-0d2eed058825ff843
+
+  PublicSubnet1ID:
+    Description: Public Subnet 1 ID
+    Type: String
+    Default: subnet-0d3474ce385175d65
+
+  PublicSubnet2ID:
+    Description: Public Subnet 2 ID
+    Type: String
+    Default: subnet-0c76e46dc8fc0bad5
+
+  PrivateSubnet1ID:
+    Description: Private Subnet 1 ID
+    Type: String
+    Default: subnet-050b342017b8f4c4e
+
+  PrivateSubnet2ID:
+    Description: Private Subnet 2 ID
+    Type: String
+    Default: subnet-0df7fd4ae1b610131
+
+  WebServerSecurityGroupID:
+    Description: Web server security group id
+    Type: String
+    Default: sg-0ec189fddafdd3910
+
+  AppServerSecurityGroupID:
+    Description: App server security group id
+    Type: String
+    Default: sg-03f82c6c73adaeb8c
+
+  BastionHostSecurityGroupID:
+    Description: bastion server security group id
+    Type: String
+    Default: sg-036329ceedccbbf40
+
+Resources:
+  BastionHost:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !FindInMap [AWSAZsArch2AMI, us-east-1a, HVM]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref BastionHostSecurityGroupID
+          SubnetId: !Ref PublicSubnet1ID
+
+  WebServerEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !FindInMap [AWSAZsArch2AMI, us-east-1a, HVM]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroupID
+      SubnetId: !Ref PublicSubnet1ID
+
+  AppServerEC2Instance1:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !FindInMap [AWSAZsArch2AMI, us-east-1a, HVM]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref AppServerSecurityGroupID
+      SubnetId: !Ref PrivateSubnet1ID
+
+  AppServerEC2Instance2:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: !FindInMap [AWSAZsArch2AMI, us-east-1b, HVM]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref AppServerSecurityGroupID
+      SubnetId: !Ref PrivateSubnet2ID
+
+  MyALB:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1ID
+        - !Ref PublicSubnet2ID
+      SecurityGroups:
+        - !Ref WebServerSecurityGroupID
+
+  MyTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 15
+      HealthyThresholdCount: 5
+      Matcher:
+        HttpCode: '200'
+      Name: EC2TargetGroup
+      Port: 8080
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '20'
+      Targets:
+        - Id: !Ref AppServerEC2Instance1
+          Port: 8080
+        - Id: !Ref AppServerEC2Instance2
+          Port: 8080
+      VpcId: !Ref MyVPC
+
+  MyListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+      LoadBalancerArn: !Ref MyALB
+      Port: 80
+      Protocol: HTTP
+
+Outputs:
+  WebServerInstanceID:
+    Description: Web Server Instance ID
+    Value: !Ref WebServerEC2Instance
+
+  AppServerInstanceID1:
+    Description: App Server Instance ID
+    Value: !Ref AppServerEC2Instance1
+
+  AppServerInstanceID2:
+    Description: App Server Instance ID
+    Value: !Ref AppServerEC2Instance2
+
+  LoadBalancerDNSName:
+    Description: Load balancer DNS Name
+    Value: !GetAtt MyALB.DNSName
